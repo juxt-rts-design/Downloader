@@ -19,10 +19,12 @@ const {
   downloadViaTwitterFallback,
   downloadViaPinterestFallback,
   getInstanceInfo,
+  processUrl,
   isLocalCobaltUrl,
   isAllowedTwitterMediaUrl,
   sanitizeMediaUrl,
   detectPlatform,
+  mapCobaltError,
   COBALT_URL,
 } = require('./cobalt');
 const { downloadYouTubeFile, sendFile } = require('./youtube-file');
@@ -1012,7 +1014,8 @@ app.get('/api/health', async (req, res) => {
 });
 
 function getPublicBase(req) {
-  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const proto = forwarded || req.protocol || 'http';
   const host = req.get('host') || `localhost:${PORT}`;
   return `${proto}://${host}`;
 }
@@ -1031,6 +1034,90 @@ app.get('/api/platforms', async (req, res) => {
       message: 'Instance Cobalt injoignable. Lance `docker compose up -d` dans ~/cobalt.',
       error: err.message,
     });
+  }
+});
+
+app.get('/api/cobalt/file', async (req, res) => {
+  const pageUrl = sanitizeMediaUrl(req.query.url || '');
+  const audioOnly = req.query.audio === '1';
+  let parsedPage;
+  try {
+    parsedPage = new URL(pageUrl);
+  } catch {
+    return res.status(400).json({ error: 'URL invalide' });
+  }
+  if (!['http:', 'https:'].includes(parsedPage.protocol)) {
+    return res.status(400).json({ error: 'URL invalide' });
+  }
+
+  try {
+    const cobalt = await processUrl(pageUrl, { audioOnly });
+    if (!cobalt || cobalt.status === 'error') {
+      return res.status(502).json({
+        error: 'Cobalt',
+        message: mapCobaltError(cobalt),
+      });
+    }
+
+    const mediaUrl = cobalt.url || cobalt.tunnel?.[0];
+    if (!mediaUrl) {
+      return res.status(502).json({ error: 'Cobalt', message: 'Aucun fichier à télécharger' });
+    }
+
+    if (isLocalCobaltUrl(mediaUrl)) {
+      const target = new URL(mediaUrl);
+      const upstreamReq = http.request(
+        target,
+        { method: 'GET', headers: { Accept: '*/*' } },
+        (upstream) => {
+          if ((upstream.statusCode || 500) >= 400) {
+            res.status(upstream.statusCode || 502).json({
+              error: 'Tunnel Cobalt',
+              message: `Le fichier n’a pas pu être récupéré (${upstream.statusCode})`,
+            });
+            upstream.resume();
+            return;
+          }
+          res.status(upstream.statusCode || 200);
+          res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+          res.setHeader(
+            'Content-Disposition',
+            upstream.headers['content-disposition'] ||
+              `attachment; filename="${(cobalt.filename || 'media.mp4').replace(/"/g, '')}"`
+          );
+          res.setHeader('Content-Type', upstream.headers['content-type'] || 'application/octet-stream');
+          const length = Number(upstream.headers['content-length'] || 0);
+          if (length > 0) {
+            res.setHeader('Content-Length', String(length));
+          }
+          upstream.pipe(res);
+        }
+      );
+      upstreamReq.on('error', (err) => {
+        console.error('Cobalt file:', err.message);
+        if (!res.headersSent) {
+          res.status(502).json({ error: 'Cobalt', message: err.message });
+        }
+      });
+      upstreamReq.setTimeout(180000, () => {
+        upstreamReq.destroy();
+        if (!res.headersSent) {
+          res.status(504).json({ error: 'Cobalt', message: 'Délai dépassé' });
+        }
+      });
+      upstreamReq.end();
+      return;
+    }
+
+    return res.redirect(302, mediaUrl);
+  } catch (err) {
+    console.error('Cobalt file:', err.message);
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: 'Cobalt',
+        message: err.message || 'Téléchargement impossible',
+      });
+    }
   }
 });
 

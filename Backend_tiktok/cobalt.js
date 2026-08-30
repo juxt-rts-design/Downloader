@@ -135,7 +135,7 @@ function toVideoData(url, cobalt, publicBase, { audioOnly = false } = {}) {
   const downloadUrl =
     platform === 'youtube'
       ? `${publicBase}/api/youtube/file?url=${encodeURIComponent(url)}&audio=${audioOnly ? '1' : '0'}`
-      : rewriteMediaUrl(cobalt.url || cobalt.tunnel?.[0], publicBase);
+      : `${publicBase}/api/cobalt/file?url=${encodeURIComponent(url)}&audio=${audioOnly ? '1' : '0'}`;
   const picker = Array.isArray(cobalt.picker)
     ? cobalt.picker.map((item) => ({
         type: item.type,
@@ -429,6 +429,7 @@ module.exports = {
   COBALT_URL,
   detectPlatform,
   getInstanceInfo,
+  processUrl,
   downloadViaCobalt,
   downloadViaTwitterFallback,
   downloadViaPinterestFallback,

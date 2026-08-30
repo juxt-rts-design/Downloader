@@ -65,11 +65,18 @@ function triggerFileDownload(href: string, fileName: string) {
 async function downloadViaBlob(href: string, fileName: string) {
   const response = await fetch(href)
   if (!response.ok) {
-    throw new Error('Téléchargement YouTube échoué')
+    let detail = ''
+    try {
+      const payload = await response.json()
+      detail = payload.message || payload.error || ''
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail || 'Téléchargement échoué')
   }
   const blob = await response.blob()
   if (blob.size < 1024) {
-    throw new Error('Fichier YouTube vide (0 octet)')
+    throw new Error('Fichier vide (0 octet)')
   }
   const objectUrl = URL.createObjectURL(blob)
   triggerFileDownload(objectUrl, fileName)
@@ -221,11 +228,7 @@ function App() {
       setError('')
       try {
         const fileName = videoData.filename || `${videoData.platform || 'media'}.mp4`
-        if (videoData.platform === 'youtube') {
-          await downloadViaBlob(videoData.downloadUrl, fileName)
-        } else {
-          triggerFileDownload(videoData.downloadUrl, fileName)
-        }
+        await downloadViaBlob(videoData.downloadUrl, fileName)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Impossible de lancer le téléchargement')
       } finally {
@@ -446,11 +449,7 @@ function App() {
         const response = await ApiService.downloadVideo(sanitizeMediaUrl(url), { audioOnly: true })
         if (response.success && response.data?.downloadUrl) {
           const fileName = response.data.filename || `audio-${response.data.id}.mp3`
-          if (videoData.platform === 'youtube') {
-            await downloadViaBlob(response.data.downloadUrl, fileName)
-          } else {
-            triggerFileDownload(response.data.downloadUrl, fileName)
-          }
+          await downloadViaBlob(response.data.downloadUrl, fileName)
         } else {
           setError(response.message || 'Impossible d’extraire l’audio')
         }
@@ -741,31 +740,10 @@ function App() {
                           <Play className="play-icon" strokeWidth={1.75} aria-hidden />
                         </div>
                       )
-                    ) : (videoData.source === 'cobalt' || videoData.platform === 'youtube') && videoData.downloadUrl ? (
-                      <video
-                        src={
-                          videoData.source === 'cobalt'
-                            ? videoData.downloadUrl
-                            : ApiService.getDownloadProxyUrl(videoData.id, videoData.downloadUrl, 'youtube')
-                        }
-                        controls
-                        preload="metadata"
-                        className="video-preview-player"
-                        onError={(e) => {
-                          console.error('Erreur de lecture vidéo:', e);
-                          if (videoData.thumbnail) {
-                            const img = document.createElement('img');
-                            img.src = videoData.thumbnail;
-                            img.className = 'video-thumbnail';
-                            img.alt = 'Aperçu de la vidéo';
-                            e.currentTarget.parentElement?.replaceChild(img, e.currentTarget);
-                          }
-                        }}
-                      />
                     ) : videoData.thumbnail ? (
                       <img
                         src={videoData.thumbnail}
-                        alt="Aperçu de la vidéo"
+                        alt="Aperçu"
                         className="video-thumbnail"
                       />
                     ) : (
