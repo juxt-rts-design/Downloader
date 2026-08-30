@@ -1,0 +1,8 @@
+# Utilisé uniquement par ./start.sh dev
+# Publie Cobalt sur le PC pour que le backend Node local y accède.
+services:
+  cobalt:
+    ports:
+      - "127.0.0.1:9000:9000"
+    environment:
+      API_URL: http://localhost:9000/

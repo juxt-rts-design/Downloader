@@ -1,0 +1,46 @@
+services:
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11
+    init: true
+    read_only: true
+    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      API_URL: http://cobalt:9000/
+      DURATION_LIMIT: "10800"
+      CORS_WILDCARD: "1"
+    expose:
+      - "9000"
+
+  backend:
+    build: ./Backend_tiktok
+    restart: unless-stopped
+    depends_on:
+      - cobalt
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      COBALT_URL: http://cobalt:9000
+      YTDLP_PATH: /usr/local/bin/yt-dlp
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - backend-cache:/app/cache
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+
+  frontend:
+    build:
+      context: ./tik_tok
+      args:
+        VITE_BACKEND_URL: ""
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${PUBLIC_PORT:-80}:80"
+
+volumes:
+  backend-cache:
