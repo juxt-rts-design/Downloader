@@ -1,0 +1,33 @@
+{
+  "name": "video-downloader-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "echo 'Build completed'",
+    "postinstall": "echo 'FFmpeg installation check'"
+  },
+  "keywords": [
+    "video",
+    "downloader",
+    "api",
+    "media"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Backend API pour télécharger des vidéos sans filigrane",
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
+    "axios": "^1.13.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "fluent-ffmpeg": "^2.1.3",
+    "helmet": "^7.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

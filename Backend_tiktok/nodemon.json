@@ -1,0 +1,16 @@
+{
+  "ignore": [
+    "cache/**/*",
+    "temp/**/*",
+    "*.player-script.js",
+    "*.log"
+  ],
+  "watch": [
+    "index.js",
+    "cobalt.js",
+    "youtube-file.js",
+    "host-fallback.js"
+  ],
+  "ext": "js,json"
+}
+

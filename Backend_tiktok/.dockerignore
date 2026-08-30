@@ -1,0 +1,8 @@
+node_modules
+cache
+temp
+.git
+*.player-script.js
+*.log
+.env
+bin/yt-dlp
