@@ -12,7 +12,7 @@ start_prod() {
   if [ ! -f .env ]; then
     cp .env.example .env
   fi
-  echo "Lancement de Juxt_RTS (Cobalt + backend + frontend)…"
+  echo "Lancement de HEXARO (Cobalt + backend + frontend)…"
   docker compose up -d --build
   port="$(grep -E '^PUBLIC_PORT=' .env 2>/dev/null | cut -d= -f2 || true)"
   port="${port:-80}"
