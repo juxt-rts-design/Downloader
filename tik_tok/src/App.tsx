@@ -70,18 +70,7 @@ function triggerFileDownload(href: string, fileName: string) {
   document.body.removeChild(link)
 }
 
-function startMediaDownload(href: string, fileName: string) {
-  if (isIosDevice()) {
-    const opened = window.open(href, '_blank', 'noopener,noreferrer')
-    if (!opened) {
-      window.location.href = href
-    }
-    return Promise.resolve()
-  }
-  return downloadViaBlob(href, fileName)
-}
-
-async function downloadViaBlob(href: string, fileName: string) {
+async function fetchMediaBlob(href: string): Promise<Blob> {
   const response = await fetch(href)
   if (!response.ok) {
     let detail = ''
@@ -97,6 +86,39 @@ async function downloadViaBlob(href: string, fileName: string) {
   if (blob.size < 1024) {
     throw new Error('Fichier vide (0 octet)')
   }
+  return blob
+}
+
+function guessMimeType(fileName: string, fallback: string): string {
+  if (/\.mp3$/i.test(fileName)) return 'audio/mpeg'
+  if (/\.(jpg|jpeg)$/i.test(fileName)) return 'image/jpeg'
+  if (/\.png$/i.test(fileName)) return 'image/png'
+  if (/\.mp4$/i.test(fileName)) return 'video/mp4'
+  return fallback || 'video/mp4'
+}
+
+// iOS : le partage natif propose « Enregistrer la vidéo » (pellicule),
+// ce que le téléchargement classique ne sait pas faire.
+async function saveToIosPhotos(blob: Blob, fileName: string): Promise<boolean> {
+  if (typeof File === 'undefined' || !navigator.share) return false
+  const file = new File([blob], fileName, { type: guessMimeType(fileName, blob.type) })
+  if (navigator.canShare && !navigator.canShare({ files: [file] })) return false
+  try {
+    await navigator.share({ files: [file] })
+    return true
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return true
+    return false
+  }
+}
+
+async function startMediaDownload(href: string, fileName: string) {
+  const blob = await fetchMediaBlob(href)
+
+  if (isIosDevice() && (await saveToIosPhotos(blob, fileName))) {
+    return
+  }
+
   const objectUrl = URL.createObjectURL(blob)
   triggerFileDownload(objectUrl, fileName)
   setTimeout(() => URL.revokeObjectURL(objectUrl), 4000)
