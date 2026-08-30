@@ -46,6 +46,14 @@ function sanitizeMediaUrl(value: string): string {
   return text
 }
 
+function isIosDevice() {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1
+}
+
 function youtubeThumbnail(pageUrl: string): string | null {
   const match = pageUrl.match(/(?:youtu\.be\/|v=)([a-zA-Z0-9_-]{11})/)
   return match ? `https://img.youtube.com/vi/${match[1]}/hqdefault.jpg` : null
@@ -60,6 +68,17 @@ function triggerFileDownload(href: string, fileName: string) {
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+}
+
+function startMediaDownload(href: string, fileName: string) {
+  if (isIosDevice()) {
+    const opened = window.open(href, '_blank', 'noopener,noreferrer')
+    if (!opened) {
+      window.location.href = href
+    }
+    return Promise.resolve()
+  }
+  return downloadViaBlob(href, fileName)
 }
 
 async function downloadViaBlob(href: string, fileName: string) {
@@ -94,13 +113,7 @@ function App() {
   const urlInputRef = useRef<HTMLInputElement>(null)
   const catcherRef = useRef<HTMLInputElement>(null)
   const inputWrapRef = useRef<HTMLDivElement>(null)
-  const [isTouch, setIsTouch] = useState(
-    () => typeof navigator !== 'undefined' && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
-  )
-
-  useEffect(() => {
-    setIsTouch(navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
-  }, [])
+  const [iosPaste] = useState(() => isIosDevice())
 
   const focusCatcher = () => {
     const el = catcherRef.current
@@ -109,7 +122,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (url || !isTouch) return
+    if (url || !iosPaste) return
 
     focusCatcher()
     const id = window.setTimeout(focusCatcher, 50)
@@ -128,7 +141,7 @@ function App() {
       document.removeEventListener('touchstart', prime, true)
       document.removeEventListener('pointerdown', prime, true)
     }
-  }, [url, isTouch])
+  }, [url, iosPaste])
 
   const applyPastedLink = (raw: string) => {
     const clean = sanitizeMediaUrl(raw)
@@ -228,7 +241,7 @@ function App() {
       setError('')
       try {
         const fileName = videoData.filename || `${videoData.platform || 'media'}.mp4`
-        await downloadViaBlob(videoData.downloadUrl, fileName)
+        await startMediaDownload(videoData.downloadUrl, fileName)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Impossible de lancer le téléchargement')
       } finally {
@@ -449,7 +462,7 @@ function App() {
         const response = await ApiService.downloadVideo(sanitizeMediaUrl(url), { audioOnly: true })
         if (response.success && response.data?.downloadUrl) {
           const fileName = response.data.filename || `audio-${response.data.id}.mp3`
-          await downloadViaBlob(response.data.downloadUrl, fileName)
+          await startMediaDownload(response.data.downloadUrl, fileName)
         } else {
           setError(response.message || 'Impossible d’extraire l’audio')
         }
@@ -567,7 +580,7 @@ function App() {
                   className="url-input"
                   disabled={loading}
                 />
-                {!url && isTouch && (
+                {!url && iosPaste && (
                   <input
                     ref={catcherRef}
                     className="paste-catcher"
@@ -602,13 +615,13 @@ function App() {
                     }}
                   />
                 )}
-                <div className={`input-actions${!url && isTouch ? ' input-actions-deco' : ''}`}>
-                  {!url && isTouch && (
+                <div className={`input-actions${!url && iosPaste ? ' input-actions-deco' : ''}`}>
+                  {!url && iosPaste && (
                     <span className="paste-btn" aria-hidden>
                       <Clipboard size={18} strokeWidth={2} />
                     </span>
                   )}
-                  {!url && !isTouch && (
+                  {!url && !iosPaste && (
                     <button
                       type="button"
                       onClick={handlePaste}
@@ -740,6 +753,22 @@ function App() {
                           <Play className="play-icon" strokeWidth={1.75} aria-hidden />
                         </div>
                       )
+                    ) : videoData.previewUrl ? (
+                      <video
+                        src={videoData.previewUrl}
+                        controls
+                        preload="metadata"
+                        className="video-preview-player"
+                        onError={(e) => {
+                          if (videoData.thumbnail) {
+                            const img = document.createElement('img')
+                            img.src = videoData.thumbnail
+                            img.className = 'video-thumbnail'
+                            img.alt = 'Aperçu de la vidéo'
+                            e.currentTarget.parentElement?.replaceChild(img, e.currentTarget)
+                          }
+                        }}
+                      />
                     ) : videoData.thumbnail ? (
                       <img
                         src={videoData.thumbnail}

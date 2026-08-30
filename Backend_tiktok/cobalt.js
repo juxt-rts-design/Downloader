@@ -136,6 +136,8 @@ function toVideoData(url, cobalt, publicBase, { audioOnly = false } = {}) {
     platform === 'youtube'
       ? `${publicBase}/api/youtube/file?url=${encodeURIComponent(url)}&audio=${audioOnly ? '1' : '0'}`
       : `${publicBase}/api/cobalt/file?url=${encodeURIComponent(url)}&audio=${audioOnly ? '1' : '0'}`;
+  const previewUrl =
+    platform === 'youtube' ? null : rewriteMediaUrl(cobalt.url || cobalt.tunnel?.[0], publicBase);
   const picker = Array.isArray(cobalt.picker)
     ? cobalt.picker.map((item) => ({
         type: item.type,
@@ -168,6 +170,7 @@ function toVideoData(url, cobalt, publicBase, { audioOnly = false } = {}) {
       thumbnail: picker[0]?.thumb || null,
       stats: { likes: 0, shares: 0, comments: 0, views: 0 },
       downloadUrl: downloadUrl || picker[0]?.url || '',
+      previewUrl,
       audioUrl,
       picker,
       canExtractAudio: !audioOnly,
@@ -286,6 +289,7 @@ async function downloadViaTwitterFallback(url, { audioOnly = false, publicBase }
         views: tweet.views || 0,
       },
       downloadUrl: downloadUrl || '',
+      previewUrl: downloadUrl || picker[0]?.url || null,
       audioUrl: null,
       picker,
       canExtractAudio: Boolean(mediaUrl) && !audioOnly,
@@ -417,6 +421,7 @@ async function downloadViaPinterestFallback(url, { audioOnly = false, publicBase
       thumbnail: thumb,
       stats: { likes: 0, shares: 0, comments: 0, views: 0 },
       downloadUrl: proxied,
+      previewUrl: proxied,
       audioUrl: null,
       picker: [],
       canExtractAudio: !isPhoto && !audioOnly,

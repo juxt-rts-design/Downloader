@@ -44,6 +44,7 @@ export interface VideoData {
     views: number
   }
   downloadUrl: string
+  previewUrl?: string | null
   audioUrl?: string
   formats?: any
   isStaticVideo?: boolean
