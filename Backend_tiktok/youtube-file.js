@@ -4,22 +4,23 @@ const path = require('path');
 const os = require('os');
 
 const YTDLP_BIN = process.env.YTDLP_PATH || path.join(__dirname, 'bin', 'yt-dlp');
-// Avec cookies, les clients web marchent mieux que android seul (SABR / formats).
 const YT_CLIENTS = String(
-  process.env.YTDLP_CLIENTS || 'web,mweb,web_embedded,android,ios,tv'
+  process.env.YTDLP_CLIENTS || 'android,ios,tv,web,mweb,web_embedded'
 )
   .split(',')
   .map((c) => c.trim())
   .filter(Boolean);
 const COOKIES_FILE = process.env.YTDLP_COOKIES || process.env.YOUTUBE_COOKIES || '';
+// 18 = progressif 360p (souvent le seul dispo sans SABR)
 const FORMAT_TRIES = [
+  '18',
+  '22',
+  'best[ext=mp4]/best',
   'bv*+ba/b',
   'bestvideo*+bestaudio/best',
-  '18/22/best[ext=mp4]/best',
   'best',
 ];
 
-/** yt-dlp ouvre les cookies en écriture → copie vers un chemin writable. */
 function resolveWritableCookies(cacheDir) {
   if (!COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) return null;
   const destDir = cacheDir || path.join(os.tmpdir(), 'hexaro-yt');
@@ -30,7 +31,7 @@ function resolveWritableCookies(cacheDir) {
     try {
       fs.chmodSync(dest, 0o600);
     } catch {
-      // ignore chmod on odd FS
+      // ignore
     }
   } catch (err) {
     console.warn(`⚠️ Copie cookies: ${err.message}`);
@@ -98,7 +99,7 @@ function runYtDlp(args, { timeoutMs = 5 * 60 * 1000, captureStdout = false } = {
   });
 }
 
-function baseArgs(client, cacheDir) {
+function baseArgs(client, cacheDir, { useCookies = true } = {}) {
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -106,9 +107,11 @@ function baseArgs(client, cacheDir) {
     '--extractor-args',
     `youtube:player_client=${client}`,
   ];
-  const cookies = getCookiesPath(cacheDir);
-  if (cookies) {
-    args.push('--cookies', cookies);
+  if (useCookies) {
+    const cookies = getCookiesPath(cacheDir);
+    if (cookies) {
+      args.push('--cookies', cookies);
+    }
   }
   return args;
 }
@@ -140,7 +143,7 @@ async function probeYouTube(pageUrl, { cacheDir } = {}) {
   const target = normalizeYoutubeUrl(pageUrl);
   const { out, client } = await withClients(
     (c) => [
-      ...baseArgs(c, cacheDir),
+      ...baseArgs(c, cacheDir, { useCookies: true }),
       '--ignore-no-formats-error',
       '--no-check-formats',
       '-j',
@@ -158,6 +161,27 @@ async function probeYouTube(pageUrl, { cacheDir } = {}) {
     throw new Error('yt-dlp n’a renvoyé aucune métadonnée');
   }
   return { info: JSON.parse(line), client };
+}
+
+/** Liste les IDs de formats vidéo réels (ignore storyboards). */
+async function listVideoFormatIds(client, cacheDir, useCookies, target) {
+  try {
+    const out = await runYtDlp(
+      [...baseArgs(client, cacheDir, { useCookies }), '-F', '--skip-download', target],
+      { timeoutMs: 45000, captureStdout: true }
+    );
+    const ids = [];
+    for (const line of out.split('\n')) {
+      const match = line.match(/^(\d+)\s+(\w+)\s+(\d+x\d+|audio only)/);
+      if (!match) continue;
+      const [, id, ext] = match;
+      if (ext === 'mhtml') continue;
+      ids.push(id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
 }
 
 async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
@@ -178,24 +202,49 @@ async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
 
   const tmpOut = path.join(cacheDir, `yt-${id}-tmp.%(ext)s`);
   let lastError = null;
+  // Cookies aident web ; android marche souvent MIEUX sans cookies sur IP VPS.
+  const cookieModes = getCookiesPath(cacheDir) ? [false, true] : [false];
 
-  for (const client of YT_CLIENTS) {
-    const formatList = audioOnly ? ['bestaudio/best', 'best'] : FORMAT_TRIES;
-    for (const format of formatList) {
-      try {
-        const args = [...baseArgs(client, cacheDir), '-f', format, '-o', tmpOut, target];
-        if (audioOnly) {
-          args.push('-x', '--audio-format', 'mp3');
-        } else {
-          args.push('--merge-output-format', 'mp4');
+  for (const useCookies of cookieModes) {
+    for (const client of YT_CLIENTS) {
+      const listed = audioOnly
+        ? []
+        : await listVideoFormatIds(client, cacheDir, useCookies, target);
+      const formatList = audioOnly
+        ? ['bestaudio/best', 'best']
+        : [...listed.slice(0, 6), ...FORMAT_TRIES];
+
+      const uniqueFormats = [...new Set(formatList)];
+
+      for (const format of uniqueFormats) {
+        try {
+          const args = [
+            ...baseArgs(client, cacheDir, { useCookies }),
+            '-f',
+            format,
+            '-o',
+            tmpOut,
+            target,
+          ];
+          if (audioOnly) {
+            args.push('-x', '--audio-format', 'mp3');
+          } else if (!/^\d+$/.test(format)) {
+            args.push('--merge-output-format', 'mp4');
+          }
+          console.log(
+            `⬇️ yt-dlp client=${client} cookies=${useCookies ? 'yes' : 'no'} format=${format}`
+          );
+          await runYtDlp(args);
+          lastError = null;
+          break;
+        } catch (err) {
+          lastError = err;
+          console.warn(
+            `⚠️ yt-dlp client=${client} cookies=${useCookies ? 'yes' : 'no'} format=${format}: ${err.message}`
+          );
         }
-        await runYtDlp(args);
-        lastError = null;
-        break;
-      } catch (err) {
-        lastError = err;
-        console.warn(`⚠️ yt-dlp client=${client} format=${format}: ${err.message}`);
       }
+      if (!lastError) break;
     }
     if (!lastError) break;
   }
