@@ -38,8 +38,9 @@ services:
       PORT: "3001"
       COBALT_URL: http://cobalt:9000
       YTDLP_PATH: /usr/local/bin/yt-dlp
-      YTDLP_CLIENTS: ${YTDLP_CLIENTS:-android,ios,tv_embedded,tv,web,mweb,web_embedded}
+      YTDLP_CLIENTS: ${YTDLP_CLIENTS:-android,ios,tv_embedded,web,mweb,web_embedded,tv}
       YTDLP_COOKIES: ${YTDLP_COOKIES:-}
+      YTDLP_PROXY: ${YTDLP_PROXY:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     volumes:
       - backend-cache:/app/cache
