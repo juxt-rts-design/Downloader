@@ -4,20 +4,20 @@ const path = require('path');
 const os = require('os');
 
 const YTDLP_BIN = process.env.YTDLP_PATH || path.join(__dirname, 'bin', 'yt-dlp');
+// android/ios = formats progressifs (18) ; web = souvent SABR inutilisable
 const YT_CLIENTS = String(
-  process.env.YTDLP_CLIENTS || 'android,ios,tv,web,mweb,web_embedded'
+  process.env.YTDLP_CLIENTS || 'android,ios,tv_embedded,tv,web,mweb,web_embedded'
 )
   .split(',')
   .map((c) => c.trim())
   .filter(Boolean);
 const COOKIES_FILE = process.env.YTDLP_COOKIES || process.env.YOUTUBE_COOKIES || '';
-// 18 = progressif 360p (souvent le seul dispo sans SABR)
 const FORMAT_TRIES = [
   '18',
   '22',
-  'best[ext=mp4]/best',
-  'bv*+ba/b',
-  'bestvideo*+bestaudio/best',
+  '17',
+  'best[height<=360][ext=mp4]/best[ext=mp4]/best',
+  'bv*[height<=720]+ba/b',
   'best',
 ];
 
@@ -59,6 +59,14 @@ function extractYoutubeId(url) {
 function normalizeYoutubeUrl(url) {
   const id = extractYoutubeId(url);
   return id ? `https://www.youtube.com/watch?v=${id}` : url;
+}
+
+function isBotError(msg) {
+  return /not a bot|Sign in to confirm|login required/i.test(String(msg || ''));
+}
+
+function isFormatError(msg) {
+  return /format is not available|Requested format/i.test(String(msg || ''));
 }
 
 function runYtDlp(args, { timeoutMs = 5 * 60 * 1000, captureStdout = false } = {}) {
@@ -104,6 +112,8 @@ function baseArgs(client, cacheDir, { useCookies = true } = {}) {
     '--no-playlist',
     '--no-warnings',
     '--no-check-certificates',
+    '--js-runtimes',
+    'node',
     '--extractor-args',
     `youtube:player_client=${client}`,
   ];
@@ -116,15 +126,25 @@ function baseArgs(client, cacheDir, { useCookies = true } = {}) {
   return args;
 }
 
-async function withClients(buildArgs, { timeoutMs, captureStdout = false } = {}) {
+async function withClients(buildArgs, { timeoutMs, captureStdout = false, cacheDir } = {}) {
   let lastError = null;
-  for (const client of YT_CLIENTS) {
-    try {
-      const out = await runYtDlp(buildArgs(client), { timeoutMs, captureStdout });
-      return { out, client };
-    } catch (err) {
-      lastError = err;
-      console.warn(`⚠️ yt-dlp client=${client} échoué: ${err.message}`);
+  const hasCookies = Boolean(getCookiesPath(cacheDir));
+  const modes = hasCookies ? [true, false] : [false];
+
+  for (const useCookies of modes) {
+    for (const client of YT_CLIENTS) {
+      try {
+        const out = await runYtDlp(buildArgs(client, useCookies), { timeoutMs, captureStdout });
+        return { out, client, useCookies };
+      } catch (err) {
+        lastError = err;
+        console.warn(
+          `⚠️ yt-dlp probe client=${client} cookies=${useCookies ? 'yes' : 'no'}: ${err.message}`
+        );
+        if (!useCookies && isBotError(err.message) && hasCookies) {
+          break;
+        }
+      }
     }
   }
   throw lastError || new Error('yt-dlp: tous les clients YouTube ont échoué');
@@ -142,15 +162,15 @@ function sendFile(res, filePath, { filename, contentType }) {
 async function probeYouTube(pageUrl, { cacheDir } = {}) {
   const target = normalizeYoutubeUrl(pageUrl);
   const { out, client } = await withClients(
-    (c) => [
-      ...baseArgs(c, cacheDir, { useCookies: true }),
+    (c, useCookies) => [
+      ...baseArgs(c, cacheDir, { useCookies }),
       '--ignore-no-formats-error',
       '--no-check-formats',
       '-j',
       '--skip-download',
       target,
     ],
-    { timeoutMs: 60000, captureStdout: true }
+    { timeoutMs: 60000, captureStdout: true, cacheDir }
   );
   const line = out
     .trim()
@@ -163,7 +183,6 @@ async function probeYouTube(pageUrl, { cacheDir } = {}) {
   return { info: JSON.parse(line), client };
 }
 
-/** Liste les IDs de formats vidéo réels (ignore storyboards). */
 async function listVideoFormatIds(client, cacheDir, useCookies, target) {
   try {
     const out = await runYtDlp(
@@ -174,14 +193,29 @@ async function listVideoFormatIds(client, cacheDir, useCookies, target) {
     for (const line of out.split('\n')) {
       const match = line.match(/^(\d+)\s+(\w+)\s+(\d+x\d+|audio only)/);
       if (!match) continue;
-      const [, id, ext] = match;
+      const [, formatId, ext] = match;
       if (ext === 'mhtml') continue;
-      ids.push(id);
+      ids.push(formatId);
+    }
+    if (ids.length) {
+      console.log(`📋 formats client=${client} cookies=${useCookies ? 'yes' : 'no'}: ${ids.slice(0, 8).join(',')}`);
     }
     return ids;
-  } catch {
+  } catch (err) {
+    console.warn(`⚠️ -F client=${client} cookies=${useCookies ? 'yes' : 'no'}: ${err.message}`);
     return [];
   }
+}
+
+async function tryDownloadOnce({ client, useCookies, format, audioOnly, cacheDir, target, tmpOut }) {
+  const args = [...baseArgs(client, cacheDir, { useCookies }), '-f', format, '-o', tmpOut, target];
+  if (audioOnly) {
+    args.push('-x', '--audio-format', 'mp3');
+  } else if (!/^\d+$/.test(format)) {
+    args.push('--merge-output-format', 'mp4');
+  }
+  console.log(`⬇️ yt-dlp client=${client} cookies=${useCookies ? 'yes' : 'no'} format=${format}`);
+  await runYtDlp(args);
 }
 
 async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
@@ -202,54 +236,93 @@ async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
 
   const tmpOut = path.join(cacheDir, `yt-${id}-tmp.%(ext)s`);
   let lastError = null;
-  // Cookies aident web ; android marche souvent MIEUX sans cookies sur IP VPS.
-  const cookieModes = getCookiesPath(cacheDir) ? [false, true] : [false];
+  const hasCookies = Boolean(getCookiesPath(cacheDir));
+  // Sur VPS : cookies d’abord (sans cookies = anti-bot).
+  const cookieModes = hasCookies ? [true, false] : [false];
 
   for (const useCookies of cookieModes) {
+    let botOnThisMode = false;
+
     for (const client of YT_CLIENTS) {
-      const listed = audioOnly
-        ? []
-        : await listVideoFormatIds(client, cacheDir, useCookies, target);
+      // Tentative prioritaire : android/ios + 18
+      if (!audioOnly && (client === 'android' || client === 'ios')) {
+        try {
+          await tryDownloadOnce({
+            client,
+            useCookies,
+            format: '18',
+            audioOnly,
+            cacheDir,
+            target,
+            tmpOut,
+          });
+          lastError = null;
+          botOnThisMode = false;
+          break;
+        } catch (err) {
+          lastError = err;
+          console.warn(`⚠️ prioritaire ${client}/18: ${err.message}`);
+          if (isBotError(err.message)) {
+            botOnThisMode = true;
+            if (!useCookies && hasCookies) break;
+            continue;
+          }
+        }
+      }
+
+      const listed = audioOnly ? [] : await listVideoFormatIds(client, cacheDir, useCookies, target);
+      if (!listed.length && !audioOnly && isBotError(lastError?.message)) {
+        continue;
+      }
+
       const formatList = audioOnly
         ? ['bestaudio/best', 'best']
-        : [...listed.slice(0, 6), ...FORMAT_TRIES];
-
+        : [...listed.slice(0, 8), ...FORMAT_TRIES];
       const uniqueFormats = [...new Set(formatList)];
 
       for (const format of uniqueFormats) {
+        if (!audioOnly && client === 'android' && format === '18') continue; // déjà tenté
         try {
-          const args = [
-            ...baseArgs(client, cacheDir, { useCookies }),
-            '-f',
+          await tryDownloadOnce({
+            client,
+            useCookies,
             format,
-            '-o',
-            tmpOut,
+            audioOnly,
+            cacheDir,
             target,
-          ];
-          if (audioOnly) {
-            args.push('-x', '--audio-format', 'mp3');
-          } else if (!/^\d+$/.test(format)) {
-            args.push('--merge-output-format', 'mp4');
-          }
-          console.log(
-            `⬇️ yt-dlp client=${client} cookies=${useCookies ? 'yes' : 'no'} format=${format}`
-          );
-          await runYtDlp(args);
+            tmpOut,
+          });
           lastError = null;
+          botOnThisMode = false;
           break;
         } catch (err) {
           lastError = err;
           console.warn(
             `⚠️ yt-dlp client=${client} cookies=${useCookies ? 'yes' : 'no'} format=${format}: ${err.message}`
           );
+          if (isBotError(err.message)) {
+            botOnThisMode = true;
+            break; // inutile de tester tous les formats si bot
+          }
+          if (isFormatError(err.message) && listed.length === 0) {
+            break; // pas de formats sur ce client
+          }
         }
       }
       if (!lastError) break;
+      if (botOnThisMode && !useCookies && hasCookies) break;
     }
     if (!lastError) break;
   }
 
-  if (lastError) throw lastError;
+  if (lastError) {
+    if (isBotError(lastError.message)) {
+      throw new Error(
+        'YouTube anti-bot sur cette IP. Réexporte des cookies frais (compte connecté) vers Backend_tiktok/cookies/youtube.txt'
+      );
+    }
+    throw lastError;
+  }
 
   const produced = fs.readdirSync(cacheDir).find((name) => name.startsWith(`yt-${id}-tmp.`));
   if (!produced) {
