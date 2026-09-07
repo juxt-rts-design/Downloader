@@ -21,6 +21,7 @@ const {
   getInstanceInfo,
   processUrl,
   isLocalCobaltUrl,
+  resolveCobaltTunnelUrl,
   isAllowedTwitterMediaUrl,
   sanitizeMediaUrl,
   detectPlatform,
@@ -1059,7 +1060,7 @@ app.get('/api/cobalt/file', async (req, res) => {
       });
     }
 
-    const mediaUrl = cobalt.url || cobalt.tunnel?.[0];
+    const mediaUrl = resolveCobaltTunnelUrl(cobalt.url || cobalt.tunnel?.[0]);
     if (!mediaUrl) {
       return res.status(502).json({ error: 'Cobalt', message: 'Aucun fichier à télécharger' });
     }
@@ -1132,7 +1133,7 @@ app.get('/api/cobalt/proxy', (req, res) => {
 
   let target;
   try {
-    target = new URL(raw);
+    target = new URL(resolveCobaltTunnelUrl(raw));
   } catch {
     return res.status(400).json({ error: 'URL de tunnel invalide' });
   }
@@ -1214,6 +1215,68 @@ app.get('/api/youtube/file', async (req, res) => {
     return res.status(400).json({ error: 'URL YouTube invalide' });
   }
 
+  const friendlyBotError = (raw) => {
+    const msg = String(raw || '');
+    if (/not a bot|Sign in|cookies|poToken|login/i.test(msg)) {
+      return (
+        'YouTube bloque l’IP du serveur (anti-bot). ' +
+        'Déploie avec yt-session-generator (docker compose) ou ajoute des cookies YouTube ' +
+        '(YTDLP_COOKIES=/cookies/youtube.txt).'
+      );
+    }
+    return msg || 'Téléchargement YouTube impossible';
+  };
+
+  // 1) Cobalt + session YouTube (même IP que le VPS, mais avec poToken)
+  try {
+    const cobalt = await processUrl(pageUrl, { audioOnly });
+    const mediaUrl = resolveCobaltTunnelUrl(cobalt?.url || cobalt?.tunnel?.[0]);
+    if (cobalt && cobalt.status !== 'error' && mediaUrl && isLocalCobaltUrl(mediaUrl)) {
+      const ok = await new Promise((resolve) => {
+        const target = new URL(mediaUrl);
+        const upstreamReq = http.request(
+          target,
+          { method: 'GET', headers: { Accept: '*/*' } },
+          (upstream) => {
+            const status = upstream.statusCode || 500;
+            const lengthHeader = upstream.headers['content-length'];
+            const length = lengthHeader !== undefined ? Number(lengthHeader) : -1;
+            // Cobalt peut streamer sans Content-Length ; on rejette seulement 0 octet explicite.
+            if (status >= 400 || length === 0) {
+              upstream.resume();
+              resolve(false);
+              return;
+            }
+            res.status(status);
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+            res.setHeader(
+              'Content-Disposition',
+              upstream.headers['content-disposition'] ||
+                `attachment; filename="${(cobalt.filename || 'youtube.mp4').replace(/"/g, '')}"`
+            );
+            res.setHeader('Content-Type', upstream.headers['content-type'] || 'video/mp4');
+            if (length > 0) {
+              res.setHeader('Content-Length', String(length));
+            }
+            upstream.pipe(res);
+            resolve(true);
+          }
+        );
+        upstreamReq.on('error', () => resolve(false));
+        upstreamReq.setTimeout(20000, () => {
+          upstreamReq.destroy();
+          resolve(false);
+        });
+        upstreamReq.end();
+      });
+      if (ok) return;
+      console.warn('⚠️ Tunnel Cobalt YouTube vide / KO, fallback yt-dlp…');
+    }
+  } catch (cobaltErr) {
+    console.warn(`⚠️ Cobalt YouTube file: ${cobaltErr.message}`);
+  }
+
+  // 2) yt-dlp (marche en local ; en prod souvent cookies requis)
   try {
     const file = await downloadYouTubeFile(pageUrl, { audioOnly, cacheDir: CACHE_DIR });
     sendFile(res, file.path, {
@@ -1225,7 +1288,7 @@ app.get('/api/youtube/file', async (req, res) => {
     if (!res.headersSent) {
       res.status(502).json({
         error: 'YouTube',
-        message: err.message || 'Téléchargement YouTube impossible',
+        message: friendlyBotError(err.message),
       });
     }
   }
@@ -1655,12 +1718,13 @@ app.post('/api/download', async (req, res) => {
           return res.json(ytResult);
         } catch (ytError) {
           console.warn(`⚠️ Fallback YouTube échoué: ${ytError.message}`);
+          const bot = /not a bot|Sign in|cookies|429/i.test(String(ytError.message || ''));
           return res.status(502).json({
             success: false,
             error: 'YouTube',
-            message:
-              ytError.message ||
-              'YouTube bloque cette IP (souvent VPS). Réessaie plus tard ou ajoute des cookies YouTube.',
+            message: bot
+              ? 'YouTube bloque l’IP du VPS (anti-bot). Relance docker compose (yt-session-generator) ou ajoute des cookies YouTube.'
+              : ytError.message || cobaltError.message,
           });
         }
       }

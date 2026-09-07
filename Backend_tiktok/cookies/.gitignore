@@ -1,5 +1,10 @@
 # Place ici youtube.txt (format Netscape) exporté depuis ton navigateur.
-# Puis dans .env :
+# Extension : "Get cookies.txt LOCALLY" sur youtube.com (compte connecté).
+#
+# Puis dans .env à la racine :
 #   YTDLP_COOKIES=/cookies/youtube.txt
+#   YTDLP_COOKIES_HOST=./Backend_tiktok/cookies
+#
+# Ensuite : sudo docker compose up -d --build
 *
 !.gitignore

@@ -69,14 +69,41 @@ function mapCobaltError(payload) {
 
 function rewriteMediaUrl(mediaUrl, publicBase) {
   if (!mediaUrl) return null;
-  return `${publicBase}/api/cobalt/proxy?u=${encodeURIComponent(mediaUrl)}`;
+  return `${publicBase}/api/cobalt/proxy?u=${encodeURIComponent(resolveCobaltTunnelUrl(mediaUrl))}`;
+}
+
+function cobaltInternalOrigin() {
+  try {
+    return new URL(COBALT_URL).origin;
+  } catch {
+    return 'http://cobalt:9000';
+  }
+}
+
+/** En Docker, Cobalt renvoie souvent http://localhost:9000/tunnel… — inutilisable depuis le backend. */
+function resolveCobaltTunnelUrl(raw) {
+  if (!raw) return raw;
+  try {
+    const parsed = new URL(raw);
+    if (['127.0.0.1', 'localhost', '0.0.0.0'].includes(parsed.hostname)) {
+      const internal = new URL(cobaltInternalOrigin());
+      parsed.protocol = internal.protocol;
+      parsed.hostname = internal.hostname;
+      parsed.port = internal.port || (internal.protocol === 'https:' ? '443' : '9000');
+      return parsed.toString();
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
 }
 
 function isLocalCobaltUrl(raw) {
   try {
-    const parsed = new URL(raw);
-    const hostOk = ['127.0.0.1', 'localhost', 'cobalt'].includes(parsed.hostname);
-    const portOk = parsed.port === '9000' || parsed.port === '';
+    const parsed = new URL(resolveCobaltTunnelUrl(raw));
+    const cobaltHost = new URL(cobaltInternalOrigin()).hostname;
+    const hostOk = ['127.0.0.1', 'localhost', 'cobalt', cobaltHost].includes(parsed.hostname);
+    const portOk = parsed.port === '9000' || parsed.port === '' || parsed.port === new URL(cobaltInternalOrigin()).port;
     return hostOk && portOk && (parsed.protocol === 'http:' || parsed.protocol === 'https:');
   } catch {
     return false;
@@ -130,8 +157,7 @@ function toVideoData(url, cobalt, publicBase, { audioOnly = false } = {}) {
   const platform = detectPlatform(url);
   const filename = cobalt.filename || cobalt.output?.filename || (audioOnly ? 'audio.mp3' : 'media.mp4');
   const title = filename.replace(/\.[^.]+$/, '') || 'Média';
-  // YouTube : le tunnel Cobalt ressort souvent à 0 octet (blocage Docker).
-  // On sert le fichier via yt-dlp sur la machine hôte.
+  // YouTube : /api/youtube/file tente Cobalt (session) puis yt-dlp (cookies).
   const downloadUrl =
     platform === 'youtube'
       ? `${publicBase}/api/youtube/file?url=${encodeURIComponent(url)}&audio=${audioOnly ? '1' : '0'}`
@@ -440,6 +466,7 @@ module.exports = {
   downloadViaPinterestFallback,
   sanitizeMediaUrl,
   isLocalCobaltUrl,
+  resolveCobaltTunnelUrl,
   isAllowedTwitterMediaUrl,
   mapCobaltError,
 };
