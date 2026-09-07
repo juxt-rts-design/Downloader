@@ -27,7 +27,7 @@ const {
   mapCobaltError,
   COBALT_URL,
 } = require('./cobalt');
-const { downloadYouTubeFile, sendFile } = require('./youtube-file');
+const { downloadYouTubeFile, downloadViaYoutubeFallback, sendFile } = require('./youtube-file');
 const {
   isHostFallbackPlatform,
   downloadViaHostFallback,
@@ -1642,6 +1642,25 @@ app.post('/api/download', async (req, res) => {
             success: false,
             error: 'Pinterest',
             message: pinError.message || cobaltError.message,
+          });
+        }
+      }
+      if (isYouTube) {
+        try {
+          const ytResult = await downloadViaYoutubeFallback(url, {
+            audioOnly,
+            publicBase: getPublicBase(req),
+          });
+          console.log(`✅ Fallback YouTube OK (${ytResult.data.cobaltStatus})`);
+          return res.json(ytResult);
+        } catch (ytError) {
+          console.warn(`⚠️ Fallback YouTube échoué: ${ytError.message}`);
+          return res.status(502).json({
+            success: false,
+            error: 'YouTube',
+            message:
+              ytError.message ||
+              'YouTube bloque cette IP (souvent VPS). Réessaie plus tard ou ajoute des cookies YouTube.',
           });
         }
       }

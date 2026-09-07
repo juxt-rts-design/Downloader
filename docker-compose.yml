@@ -24,9 +24,12 @@ services:
       PORT: "3001"
       COBALT_URL: http://cobalt:9000
       YTDLP_PATH: /usr/local/bin/yt-dlp
+      YTDLP_CLIENTS: ${YTDLP_CLIENTS:-android,ios,tv,mweb,web}
+      YTDLP_COOKIES: ${YTDLP_COOKIES:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     volumes:
       - backend-cache:/app/cache
+      - ${YTDLP_COOKIES_HOST:-./Backend_tiktok/cookies}:/cookies:ro
     dns:
       - 1.1.1.1
       - 8.8.8.8

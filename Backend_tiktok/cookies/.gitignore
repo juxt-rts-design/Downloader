@@ -1,0 +1,5 @@
+# Place ici youtube.txt (format Netscape) exporté depuis ton navigateur.
+# Puis dans .env :
+#   YTDLP_COOKIES=/cookies/youtube.txt
+*
+!.gitignore
