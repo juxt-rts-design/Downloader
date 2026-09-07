@@ -1,5 +1,8 @@
 services:
+  # Optionnel (RAM ++) : docker compose --profile yt up -d
+  # Sans ça, TikTok/IG/X/etc. marchent ; YouTube VPS → cookies yt-dlp
   yt-session-generator:
+    profiles: ["yt"]
     image: ghcr.io/imputnet/yt-session-generator:webserver
     init: true
     restart: unless-stopped
@@ -8,14 +11,13 @@ services:
       - 8.8.8.8
     expose:
       - "8080"
+    mem_limit: 1g
 
   cobalt:
     image: ghcr.io/imputnet/cobalt:11
     init: true
     read_only: true
     restart: unless-stopped
-    depends_on:
-      - yt-session-generator
     dns:
       - 1.1.1.1
       - 8.8.8.8
@@ -23,9 +25,6 @@ services:
       API_URL: http://cobalt:9000/
       DURATION_LIMIT: "10800"
       CORS_WILDCARD: "1"
-      # Contourne le check « not a bot » YouTube (poToken / visitor_data)
-      YOUTUBE_SESSION_SERVER: http://yt-session-generator:8080/
-      YOUTUBE_SESSION_INNERTUBE_CLIENT: WEB_EMBEDDED
     expose:
       - "9000"
 
@@ -48,6 +47,7 @@ services:
     dns:
       - 1.1.1.1
       - 8.8.8.8
+    mem_limit: 1g
 
   frontend:
     build:

@@ -1,0 +1,8 @@
+# Overlay optionnel : docker compose -f docker-compose.yml -f docker-compose.yt.yml --profile yt up -d
+services:
+  cobalt:
+    depends_on:
+      - yt-session-generator
+    environment:
+      YOUTUBE_SESSION_SERVER: http://yt-session-generator:8080/
+      YOUTUBE_SESSION_INNERTUBE_CLIENT: WEB_EMBEDDED
