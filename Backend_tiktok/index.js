@@ -1713,18 +1713,20 @@ app.post('/api/download', async (req, res) => {
           const ytResult = await downloadViaYoutubeFallback(url, {
             audioOnly,
             publicBase: getPublicBase(req),
+            cacheDir: CACHE_DIR,
           });
           console.log(`✅ Fallback YouTube OK (${ytResult.data.cobaltStatus})`);
           return res.json(ytResult);
         } catch (ytError) {
           console.warn(`⚠️ Fallback YouTube échoué: ${ytError.message}`);
-          const bot = /not a bot|Sign in|cookies|429/i.test(String(ytError.message || ''));
+          const msg = String(ytError.message || '');
+          const bot = /not a bot|Sign in to confirm|Status code: 429|\b429\b/i.test(msg);
           return res.status(502).json({
             success: false,
             error: 'YouTube',
             message: bot
-              ? 'YouTube bloque l’IP du VPS (anti-bot). Relance docker compose (yt-session-generator) ou ajoute des cookies YouTube.'
-              : ytError.message || cobaltError.message,
+              ? 'YouTube bloque l’IP du VPS (anti-bot). Vérifie YTDLP_COOKIES=/cookies/youtube.txt ou réexporte les cookies.'
+              : msg || cobaltError.message,
           });
         }
       }

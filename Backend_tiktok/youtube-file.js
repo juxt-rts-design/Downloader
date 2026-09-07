@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const YTDLP_BIN = process.env.YTDLP_PATH || path.join(__dirname, 'bin', 'yt-dlp');
 const YT_CLIENTS = String(process.env.YTDLP_CLIENTS || 'android,ios,tv,mweb,web')
@@ -8,6 +9,30 @@ const YT_CLIENTS = String(process.env.YTDLP_CLIENTS || 'android,ios,tv,mweb,web'
   .map((c) => c.trim())
   .filter(Boolean);
 const COOKIES_FILE = process.env.YTDLP_COOKIES || process.env.YOUTUBE_COOKIES || '';
+
+/** yt-dlp ouvre les cookies en écriture → copie vers un chemin writable. */
+function resolveWritableCookies(cacheDir) {
+  if (!COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) return null;
+  const destDir = cacheDir && fs.existsSync(cacheDir) ? cacheDir : path.join(os.tmpdir(), 'hexaro-yt');
+  fs.mkdirSync(destDir, { recursive: true });
+  const dest = path.join(destDir, 'youtube-cookies.txt');
+  try {
+    fs.copyFileSync(COOKIES_FILE, dest);
+    fs.chmodSync(dest, 0o600);
+  } catch (err) {
+    console.warn(`⚠️ Copie cookies: ${err.message}`);
+    return COOKIES_FILE;
+  }
+  return dest;
+}
+
+let cachedCookiesPath = null;
+
+function getCookiesPath(cacheDir) {
+  if (cachedCookiesPath && fs.existsSync(cachedCookiesPath)) return cachedCookiesPath;
+  cachedCookiesPath = resolveWritableCookies(cacheDir);
+  return cachedCookiesPath;
+}
 
 function extractYoutubeId(url) {
   const match = String(url).match(/(?:youtu\.be\/|v=|shorts\/)([a-zA-Z0-9_-]{11})/);
@@ -57,7 +82,7 @@ function runYtDlp(args, { timeoutMs = 5 * 60 * 1000, captureStdout = false } = {
   });
 }
 
-function baseArgs(client) {
+function baseArgs(client, cacheDir) {
   const args = [
     '--no-playlist',
     '--no-warnings',
@@ -65,8 +90,9 @@ function baseArgs(client) {
     '--extractor-args',
     `youtube:player_client=${client}`,
   ];
-  if (COOKIES_FILE && fs.existsSync(COOKIES_FILE)) {
-    args.push('--cookies', COOKIES_FILE);
+  const cookies = getCookiesPath(cacheDir);
+  if (cookies) {
+    args.push('--cookies', cookies);
   }
   return args;
 }
@@ -94,10 +120,10 @@ function sendFile(res, filePath, { filename, contentType }) {
   fs.createReadStream(filePath).pipe(res);
 }
 
-async function probeYouTube(pageUrl) {
+async function probeYouTube(pageUrl, { cacheDir } = {}) {
   const target = normalizeYoutubeUrl(pageUrl);
   const { out, client } = await withClients(
-    (c) => [...baseArgs(c), '-j', '--skip-download', target],
+    (c) => [...baseArgs(c, cacheDir), '-j', '--skip-download', target],
     { timeoutMs: 45000, captureStdout: true }
   );
   const line = out
@@ -129,7 +155,7 @@ async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
 
   const tmpOut = path.join(cacheDir, `yt-${id}-tmp.%(ext)s`);
   await withClients((client) => {
-    const args = [...baseArgs(client), '-o', tmpOut, target];
+    const args = [...baseArgs(client, cacheDir), '-o', tmpOut, target];
     if (audioOnly) {
       args.unshift('-f', 'bestaudio/best', '-x', '--audio-format', 'mp3');
     } else {
@@ -156,12 +182,12 @@ async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
   };
 }
 
-async function downloadViaYoutubeFallback(url, { audioOnly = false, publicBase } = {}) {
+async function downloadViaYoutubeFallback(url, { audioOnly = false, publicBase, cacheDir } = {}) {
   const id = extractYoutubeId(url);
   if (!id) {
     throw new Error('Lien YouTube invalide');
   }
-  const { info, client } = await probeYouTube(url);
+  const { info, client } = await probeYouTube(url, { cacheDir });
   const title = String(info.title || info.fulltitle || `YouTube ${id}`).slice(0, 160);
   const author = info.uploader || info.channel || info.uploader_id || 'youtube';
   const thumb =

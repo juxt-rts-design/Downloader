@@ -43,7 +43,8 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
     volumes:
       - backend-cache:/app/cache
-      - ${YTDLP_COOKIES_HOST:-./Backend_tiktok/cookies}:/cookies:ro
+      # rw : yt-dlp met à jour le fichier cookies (sinon Errno 30 Read-only)
+      - ${YTDLP_COOKIES_HOST:-./Backend_tiktok/cookies}:/cookies
     dns:
       - 1.1.1.1
       - 8.8.8.8
