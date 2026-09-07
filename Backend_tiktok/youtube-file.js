@@ -142,11 +142,12 @@ async function probeYouTube(pageUrl, { cacheDir } = {}) {
     (c) => [
       ...baseArgs(c, cacheDir),
       '--ignore-no-formats-error',
+      '--no-check-formats',
       '-j',
       '--skip-download',
       target,
     ],
-    { timeoutMs: 45000, captureStdout: true }
+    { timeoutMs: 60000, captureStdout: true }
   );
   const line = out
     .trim()
