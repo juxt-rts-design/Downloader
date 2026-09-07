@@ -4,21 +4,34 @@ const path = require('path');
 const os = require('os');
 
 const YTDLP_BIN = process.env.YTDLP_PATH || path.join(__dirname, 'bin', 'yt-dlp');
-const YT_CLIENTS = String(process.env.YTDLP_CLIENTS || 'android,ios,tv,mweb,web')
+// Avec cookies, les clients web marchent mieux que android seul (SABR / formats).
+const YT_CLIENTS = String(
+  process.env.YTDLP_CLIENTS || 'web,mweb,web_embedded,android,ios,tv'
+)
   .split(',')
   .map((c) => c.trim())
   .filter(Boolean);
 const COOKIES_FILE = process.env.YTDLP_COOKIES || process.env.YOUTUBE_COOKIES || '';
+const FORMAT_TRIES = [
+  'bv*+ba/b',
+  'bestvideo*+bestaudio/best',
+  '18/22/best[ext=mp4]/best',
+  'best',
+];
 
 /** yt-dlp ouvre les cookies en écriture → copie vers un chemin writable. */
 function resolveWritableCookies(cacheDir) {
   if (!COOKIES_FILE || !fs.existsSync(COOKIES_FILE)) return null;
-  const destDir = cacheDir && fs.existsSync(cacheDir) ? cacheDir : path.join(os.tmpdir(), 'hexaro-yt');
+  const destDir = cacheDir || path.join(os.tmpdir(), 'hexaro-yt');
   fs.mkdirSync(destDir, { recursive: true });
   const dest = path.join(destDir, 'youtube-cookies.txt');
   try {
     fs.copyFileSync(COOKIES_FILE, dest);
-    fs.chmodSync(dest, 0o600);
+    try {
+      fs.chmodSync(dest, 0o600);
+    } catch {
+      // ignore chmod on odd FS
+    }
   } catch (err) {
     console.warn(`⚠️ Copie cookies: ${err.message}`);
     return COOKIES_FILE;
@@ -31,6 +44,9 @@ let cachedCookiesPath = null;
 function getCookiesPath(cacheDir) {
   if (cachedCookiesPath && fs.existsSync(cachedCookiesPath)) return cachedCookiesPath;
   cachedCookiesPath = resolveWritableCookies(cacheDir);
+  if (cachedCookiesPath) {
+    console.log(`🍪 Cookies YouTube: ${cachedCookiesPath}`);
+  }
   return cachedCookiesPath;
 }
 
@@ -123,7 +139,13 @@ function sendFile(res, filePath, { filename, contentType }) {
 async function probeYouTube(pageUrl, { cacheDir } = {}) {
   const target = normalizeYoutubeUrl(pageUrl);
   const { out, client } = await withClients(
-    (c) => [...baseArgs(c, cacheDir), '-j', '--skip-download', target],
+    (c) => [
+      ...baseArgs(c, cacheDir),
+      '--ignore-no-formats-error',
+      '-j',
+      '--skip-download',
+      target,
+    ],
     { timeoutMs: 45000, captureStdout: true }
   );
   const line = out
@@ -154,15 +176,30 @@ async function downloadYouTubeFile(pageUrl, { audioOnly = false, cacheDir }) {
   }
 
   const tmpOut = path.join(cacheDir, `yt-${id}-tmp.%(ext)s`);
-  await withClients((client) => {
-    const args = [...baseArgs(client, cacheDir), '-o', tmpOut, target];
-    if (audioOnly) {
-      args.unshift('-f', 'bestaudio/best', '-x', '--audio-format', 'mp3');
-    } else {
-      args.unshift('-f', '18/best[ext=mp4]/bv*+ba/b', '--merge-output-format', 'mp4');
+  let lastError = null;
+
+  for (const client of YT_CLIENTS) {
+    const formatList = audioOnly ? ['bestaudio/best', 'best'] : FORMAT_TRIES;
+    for (const format of formatList) {
+      try {
+        const args = [...baseArgs(client, cacheDir), '-f', format, '-o', tmpOut, target];
+        if (audioOnly) {
+          args.push('-x', '--audio-format', 'mp3');
+        } else {
+          args.push('--merge-output-format', 'mp4');
+        }
+        await runYtDlp(args);
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`⚠️ yt-dlp client=${client} format=${format}: ${err.message}`);
+      }
     }
-    return args;
-  });
+    if (!lastError) break;
+  }
+
+  if (lastError) throw lastError;
 
   const produced = fs.readdirSync(cacheDir).find((name) => name.startsWith(`yt-${id}-tmp.`));
   if (!produced) {
