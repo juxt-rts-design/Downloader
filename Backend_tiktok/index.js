@@ -1015,9 +1015,18 @@ app.get('/api/health', async (req, res) => {
 });
 
 function getPublicBase(req) {
-  const forwarded = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const proto = forwarded || req.protocol || 'http';
-  const host = req.get('host') || `localhost:${PORT}`;
+  // Absolute override (rare). Sinon relatif → OK derrière nginx / sslip.io / IP.
+  if (process.env.PUBLIC_BASE_URL) {
+    return String(process.env.PUBLIC_BASE_URL).replace(/\/$/, '');
+  }
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const proto = forwardedProto || req.protocol || 'http';
+  const host = forwardedHost || req.get('host') || `localhost:${PORT}`;
+  // Si on arrive via le frontend Docker (Host sans port public), rester en relatif.
+  if (/^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host) || host === 'backend' || host.startsWith('backend:')) {
+    return '';
+  }
   return `${proto}://${host}`;
 }
 
